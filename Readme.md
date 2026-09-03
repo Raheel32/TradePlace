@@ -139,6 +139,16 @@ gives up some upside. Instead it checks two things:
 If both hold up consistently across tickers, this is a genuinely useful
 risk-management signal -- even one that never says which direction to trade.
 
+Before trusting any single-split result (even a good-looking one), run:
+
+```bash
+python walk_forward_volatility.py
+```
+
+Same discipline as `walk_forward.py`: 5 sequential expanding-window folds.
+Look for the accuracy baseline AND drawdown improvement to hold up in a
+clear majority of folds, not just the one split you happened to look at first.
+
 ## How to interpret the results (important)
 
 1. **Model accuracy alone means little.** Always compare against the "always
