@@ -26,6 +26,22 @@ from train_volatility import run_volatility_training
 from backtest import compute_metrics
 
 
+def simulate_constant_exposure(prices: pd.Series, avg_exposure: float):
+    """
+    Fair control for testing whether the model's DAY-BY-DAY SELECTION of when
+    to reduce exposure adds value, versus just holding a constant reduced
+    position size every day. If the managed strategy (which selectively
+    reduces on predicted-high-vol days) doesn't beat this constant-exposure
+    control on drawdown, then the earlier "always full position" comparison
+    was misleading -- the drawdown improvement would just be a mechanical
+    consequence of being under-invested on average, not real timing skill.
+    """
+    daily_returns = prices.pct_change().dropna().values
+    values = config.INITIAL_CAPITAL * np.cumprod(1 + daily_returns * avg_exposure)
+    values = np.concatenate([[config.INITIAL_CAPITAL], values])
+    return values
+
+
 def simulate_position_scaling(prices: pd.Series, predicted_prob_expand: np.ndarray, scale_down: float = None):
     """
     Simulates two portfolios over the test period:
@@ -111,6 +127,12 @@ def run_volatility_backtest(ticker=None, horizon=None, lookback=None):
     baseline_metrics = compute_metrics(baseline_values, "Always Full Position (baseline)")
     managed_metrics = compute_metrics(managed_values, "Volatility-Managed Position")
 
+    # Fair control: same average exposure as the managed strategy, but applied
+    # uniformly every day rather than selectively on predicted-high-vol days
+    avg_exposure = position_sizes.mean()
+    constant_values = simulate_constant_exposure(test_prices, avg_exposure)
+    constant_metrics = compute_metrics(constant_values, f"Constant {avg_exposure*100:.0f}% Exposure (fair control)")
+
     print(f"\n--- Risk comparison ---")
     vol_reduction = 1 - (managed_metrics['max_drawdown'] / baseline_metrics['max_drawdown']) if baseline_metrics['max_drawdown'] != 0 else 0
     return_given_up = baseline_metrics['total_return'] - managed_metrics['total_return']
@@ -119,6 +141,19 @@ def run_volatility_backtest(ticker=None, horizon=None, lookback=None):
           f"({vol_reduction*100:+.1f}% relative change)")
     print(f"Return given up by managing risk: {return_given_up*100:.2f} percentage points")
     print(f"Time spent at reduced position size: {(position_sizes < 1.0).mean()*100:.1f}% of days")
+
+    print(f"\n--- Is this actual TIMING skill, or just lower average exposure? ---")
+    print(f"Average exposure held by the managed strategy: {avg_exposure*100:.1f}%")
+    print(f"Managed (selective) drawdown:                  {managed_metrics['max_drawdown']*100:.2f}%")
+    print(f"Constant {avg_exposure*100:.0f}% exposure (uniform) drawdown:      {constant_metrics['max_drawdown']*100:.2f}%")
+    if managed_metrics['max_drawdown'] > constant_metrics['max_drawdown']:
+        print("-> Managed strategy has a BETTER (smaller) drawdown than a naive constant-exposure")
+        print("   control at the same average exposure. This is evidence of real timing skill,")
+        print("   not just being under-invested on average.")
+    else:
+        print("-> Managed strategy is NOT better than simply holding a constant reduced position")
+        print("   at the same average exposure. The apparent drawdown improvement is likely just")
+        print("   a mechanical effect of lower average exposure, not real timing skill.")
 
     evaluate_volatility_prediction_quality(test_prices, test_preds, horizon, lookback)
 
