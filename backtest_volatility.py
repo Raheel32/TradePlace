@@ -58,38 +58,45 @@ def simulate_position_scaling(prices: pd.Series, predicted_prob_expand: np.ndarr
     return baseline_values, managed_values, position_sizes
 
 
-def evaluate_volatility_prediction_quality(prices: pd.Series, predicted_prob_expand: np.ndarray, actual_labels: np.ndarray):
+def evaluate_volatility_prediction_quality(prices: pd.Series, predicted_prob_expand: np.ndarray, horizon: int):
     """
-    Beyond the classification accuracy already printed by train_volatility.py,
-    check something more directly useful: on days flagged as "high vol
-    predicted," was the ACTUAL next-day move bigger on average than on days
-    flagged "low vol predicted"? This is the real-world test of whether the
-    signal is worth acting on, independent of the arbitrary 0.5 threshold.
+    Checks the signal against the SAME horizon it was trained to predict:
+    forward `horizon`-day realized volatility, not next single-day move size.
+    (An earlier version of this check compared against next-day move size,
+    which was the wrong horizon and produced a misleading result.)
     """
-    daily_returns = prices.pct_change().dropna().values
-    n = min(len(daily_returns), len(predicted_prob_expand) - 1)
-    daily_returns = np.abs(daily_returns[:n])
+    daily_returns = prices.pct_change()
+    forward_vol = daily_returns.rolling(horizon).std().shift(-horizon).values
+
+    n = min(len(forward_vol), len(predicted_prob_expand))
+    forward_vol = forward_vol[:n]
     signals = predicted_prob_expand[:n]
 
-    high_vol_predicted = daily_returns[signals > 0.5]
-    low_vol_predicted = daily_returns[signals <= 0.5]
+    valid = ~np.isnan(forward_vol)
+    forward_vol = forward_vol[valid]
+    signals = signals[valid]
 
-    print("\n--- Does the signal actually track real move size? ---")
+    high_vol_predicted = forward_vol[signals > 0.5]
+    low_vol_predicted = signals <= 0.5
+    low_vol_predicted = forward_vol[low_vol_predicted]
+
+    print(f"\n--- Does the signal actually track real {horizon}-day forward volatility? ---")
     if len(high_vol_predicted) > 0:
-        print(f"Avg |daily return| on days predicted HIGH vol: {high_vol_predicted.mean()*100:.3f}%  "
+        print(f"Avg realized {horizon}-day volatility on days predicted HIGH vol: {high_vol_predicted.mean()*100:.3f}%  "
               f"({len(high_vol_predicted)} days)")
     if len(low_vol_predicted) > 0:
-        print(f"Avg |daily return| on days predicted LOW vol:  {low_vol_predicted.mean()*100:.3f}%  "
+        print(f"Avg realized {horizon}-day volatility on days predicted LOW vol:  {low_vol_predicted.mean()*100:.3f}%  "
               f"({len(low_vol_predicted)} days)")
     if len(high_vol_predicted) > 0 and len(low_vol_predicted) > 0:
         if high_vol_predicted.mean() > low_vol_predicted.mean():
-            print("-> Predicted-high-vol days DID have bigger average moves. Good sign.")
+            print("-> Predicted-high-vol days DID have higher realized forward volatility. Good sign.")
         else:
-            print("-> Predicted-high-vol days did NOT have bigger average moves. The signal isn't tracking real risk.")
+            print("-> Predicted-high-vol days did NOT have higher realized forward volatility. The signal isn't tracking real risk.")
 
 
-def run_volatility_backtest(ticker=None):
-    model, scaler, (X_test, y_test, test_preds, test_dates, test_prices) = run_volatility_training(ticker=ticker)
+def run_volatility_backtest(ticker=None, horizon=None):
+    horizon = horizon or config.PREDICTION_HORIZON_DAYS
+    model, scaler, (X_test, y_test, test_preds, test_dates, test_prices) = run_volatility_training(ticker=ticker, horizon=horizon)
 
     baseline_values, managed_values, position_sizes = simulate_position_scaling(test_prices, test_preds)
 
@@ -106,7 +113,7 @@ def run_volatility_backtest(ticker=None):
     print(f"Return given up by managing risk: {return_given_up*100:.2f} percentage points")
     print(f"Time spent at reduced position size: {(position_sizes < 1.0).mean()*100:.1f}% of days")
 
-    evaluate_volatility_prediction_quality(test_prices, test_preds, y_test)
+    evaluate_volatility_prediction_quality(test_prices, test_preds, horizon)
 
     print("\nHow to read this:")
     print("- This is NOT trying to beat buy-and-hold on raw return -- giving up some")
