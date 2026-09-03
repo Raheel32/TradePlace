@@ -57,6 +57,32 @@ def make_labels(df: pd.DataFrame, horizon: int = 1) -> pd.Series:
     return label
 
 
+def make_volatility_labels(df: pd.DataFrame, horizon: int = 5, lookback: int = 10) -> pd.Series:
+    """
+    Binary label for volatility PREDICTION (not direction): 1 if realized
+    volatility over the NEXT `horizon` days is higher than the TRAILING
+    volatility over the past `lookback` days, i.e. "volatility is about to
+    expand." 0 means volatility is expected to stay flat or contract.
+
+    This exploits volatility clustering (high-vol periods tend to be
+    followed by more high vol, and vice versa) rather than trying to predict
+    price direction, which tends to be a more learnable pattern in practice.
+    """
+    daily_returns = df["Close"].pct_change()
+
+    # Trailing (causal, no lookahead) volatility over the past `lookback` days
+    trailing_vol = daily_returns.rolling(lookback).std()
+
+    # Forward-looking volatility over the next `horizon` days.
+    # rolling(horizon).std() at position j covers returns [j-horizon+1 : j+1];
+    # shifting by -horizon realigns it so the value at position i covers
+    # returns [i+1 : i+horizon+1] -- i.e. strictly future data relative to i.
+    future_vol = daily_returns.rolling(horizon).std().shift(-horizon)
+
+    label = (future_vol > trailing_vol).astype(int)
+    return label
+
+
 FEATURE_COLUMNS = [
     "return_1d", "return_5d", "high_low_pct", "close_open_pct",
     "rsi_14", "macd", "macd_signal", "sma_10", "sma_30", "ema_10",
@@ -90,6 +116,27 @@ def prepare_dataset(df: pd.DataFrame, horizon: int = 1):
 
     features = df[FEATURE_COLUMNS].values
     labels = labels.values
+    dates = df.index
+
+    return features, labels, dates, df
+
+
+def prepare_volatility_dataset(df: pd.DataFrame, horizon: int = 5, lookback: int = 10):
+    """
+    Same idea as prepare_dataset, but for the volatility-expansion label
+    instead of price direction. Rows without a valid label (start, due to
+    the trailing-volatility warmup, and end, due to the forward-looking
+    window) are dropped.
+    """
+    df = add_technical_indicators(df)
+    labels = make_volatility_labels(df, horizon=horizon, lookback=lookback)
+
+    valid = labels.notna()
+    df = df.loc[valid]
+    labels = labels.loc[valid]
+
+    features = df[FEATURE_COLUMNS].values
+    labels = labels.values.astype(int)
     dates = df.index
 
     return features, labels, dates, df

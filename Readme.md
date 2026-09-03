@@ -112,6 +112,33 @@ Real data will download automatically via `data_loader.py` -- you do NOT need
 `generate_sample_data.py` on a machine with normal internet access. That script
 only exists because this sandbox couldn't reach Yahoo Finance directly.
 
+### Volatility prediction pivot (`train_volatility.py`, `backtest_volatility.py`)
+
+After single-ticker (1/5 folds) and multi-ticker (2/8 tickers) walk-forward
+results showed no consistent directional edge, this project pivoted to
+predicting **volatility expansion** instead of price direction -- i.e. "will
+this stock move more over the next N days than it has recently?" rather than
+"will it go up or down?" This exploits volatility clustering, a much more
+empirically robust pattern in markets than short-term direction.
+
+```bash
+python train_volatility.py       # trains the LSTM on the volatility-expansion label
+python backtest_volatility.py    # translates it into a position-sizing action and evaluates
+```
+
+`backtest_volatility.py` does NOT try to beat buy-and-hold on raw return --
+scaling down position size on predicted high-volatility days inherently
+gives up some upside. Instead it checks two things:
+1. Did reducing position size on flagged days improve max drawdown/risk by
+   MORE than the return given up?
+2. Did days flagged "high volatility predicted" actually have bigger real
+   price moves than days flagged "low volatility"? (printed directly, not
+   just accuracy -- this is the real-world test of whether the signal is
+   worth acting on)
+
+If both hold up consistently across tickers, this is a genuinely useful
+risk-management signal -- even one that never says which direction to trade.
+
 ## How to interpret the results (important)
 
 1. **Model accuracy alone means little.** Always compare against the "always

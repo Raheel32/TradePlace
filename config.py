@@ -39,6 +39,12 @@ PREDICTION_HORIZON_DAYS = 5   # predict direction over 5 trading days instead of
 MULTI_MODEL_PATH = "models/lstm_model_multi.pt"
 MULTI_SCALER_PATH = "models/scaler_multi.pkl"
 
+# --- Volatility prediction settings ---
+VOLATILITY_LOOKBACK_DAYS = 10   # trailing window used as the "current volatility" baseline
+VOL_MODEL_PATH = "models/lstm_model_vol.pt"
+VOL_SCALER_PATH = "models/scaler_vol.pkl"
+VOL_POSITION_SCALE_DOWN = 0.5   # position size multiplier on predicted high-volatility days (e.g. 0.5 = half size)
+
 # --- Alpaca paper trading settings ---
 # NEVER hardcode real API keys here. Set these as environment variables instead:
 #   export ALPACA_API_KEY="your_key_here"
