@@ -58,45 +58,52 @@ def simulate_position_scaling(prices: pd.Series, predicted_prob_expand: np.ndarr
     return baseline_values, managed_values, position_sizes
 
 
-def evaluate_volatility_prediction_quality(prices: pd.Series, predicted_prob_expand: np.ndarray, horizon: int):
+def evaluate_volatility_prediction_quality(prices: pd.Series, predicted_prob_expand: np.ndarray, horizon: int, lookback: int):
     """
-    Checks the signal against the SAME horizon it was trained to predict:
-    forward `horizon`-day realized volatility, not next single-day move size.
-    (An earlier version of this check compared against next-day move size,
-    which was the wrong horizon and produced a misleading result.)
+    Checks the signal against the exact quantity the label is defined on:
+    the CHANGE in volatility (future horizon-day realized vol minus trailing
+    lookback-day vol), not the absolute level. An earlier version of this
+    check compared absolute volatility levels between predicted groups,
+    which doesn't match the relative "expansion vs. trailing" label
+    definition and could show a misleading result even for a model that's
+    correctly predicting relative changes.
     """
     daily_returns = prices.pct_change()
-    forward_vol = daily_returns.rolling(horizon).std().shift(-horizon).values
+    trailing_vol = daily_returns.rolling(lookback).std()
+    future_vol = daily_returns.rolling(horizon).std().shift(-horizon)
+    delta = (future_vol - trailing_vol).values
 
-    n = min(len(forward_vol), len(predicted_prob_expand))
-    forward_vol = forward_vol[:n]
+    n = min(len(delta), len(predicted_prob_expand))
+    delta = delta[:n]
     signals = predicted_prob_expand[:n]
 
-    valid = ~np.isnan(forward_vol)
-    forward_vol = forward_vol[valid]
+    valid = ~np.isnan(delta)
+    delta = delta[valid]
     signals = signals[valid]
 
-    high_vol_predicted = forward_vol[signals > 0.5]
-    low_vol_predicted = signals <= 0.5
-    low_vol_predicted = forward_vol[low_vol_predicted]
+    high_vol_predicted = delta[signals > 0.5]
+    low_vol_predicted = delta[signals <= 0.5]
 
-    print(f"\n--- Does the signal actually track real {horizon}-day forward volatility? ---")
+    print(f"\n--- Does the signal track actual volatility CHANGE (vs. trailing baseline)? ---")
     if len(high_vol_predicted) > 0:
-        print(f"Avg realized {horizon}-day volatility on days predicted HIGH vol: {high_vol_predicted.mean()*100:.3f}%  "
+        print(f"Avg (future vol - trailing vol) on days predicted EXPAND: {high_vol_predicted.mean()*100:+.3f}pp  "
               f"({len(high_vol_predicted)} days)")
     if len(low_vol_predicted) > 0:
-        print(f"Avg realized {horizon}-day volatility on days predicted LOW vol:  {low_vol_predicted.mean()*100:.3f}%  "
+        print(f"Avg (future vol - trailing vol) on days predicted CONTRACT/FLAT: {low_vol_predicted.mean()*100:+.3f}pp  "
               f"({len(low_vol_predicted)} days)")
     if len(high_vol_predicted) > 0 and len(low_vol_predicted) > 0:
         if high_vol_predicted.mean() > low_vol_predicted.mean():
-            print("-> Predicted-high-vol days DID have higher realized forward volatility. Good sign.")
+            print("-> Predicted-EXPAND days DID show a bigger real increase in volatility. Good sign.")
         else:
-            print("-> Predicted-high-vol days did NOT have higher realized forward volatility. The signal isn't tracking real risk.")
+            print("-> Predicted-EXPAND days did NOT show a bigger real increase. The signal isn't tracking real risk.")
 
 
-def run_volatility_backtest(ticker=None, horizon=None):
+def run_volatility_backtest(ticker=None, horizon=None, lookback=None):
     horizon = horizon or config.PREDICTION_HORIZON_DAYS
-    model, scaler, (X_test, y_test, test_preds, test_dates, test_prices) = run_volatility_training(ticker=ticker, horizon=horizon)
+    lookback = lookback or config.VOLATILITY_LOOKBACK_DAYS
+    model, scaler, (X_test, y_test, test_preds, test_dates, test_prices) = run_volatility_training(
+        ticker=ticker, horizon=horizon, lookback=lookback
+    )
 
     baseline_values, managed_values, position_sizes = simulate_position_scaling(test_prices, test_preds)
 
@@ -113,7 +120,7 @@ def run_volatility_backtest(ticker=None, horizon=None):
     print(f"Return given up by managing risk: {return_given_up*100:.2f} percentage points")
     print(f"Time spent at reduced position size: {(position_sizes < 1.0).mean()*100:.1f}% of days")
 
-    evaluate_volatility_prediction_quality(test_prices, test_preds, horizon)
+    evaluate_volatility_prediction_quality(test_prices, test_preds, horizon, lookback)
 
     print("\nHow to read this:")
     print("- This is NOT trying to beat buy-and-hold on raw return -- giving up some")
