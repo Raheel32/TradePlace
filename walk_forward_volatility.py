@@ -17,15 +17,17 @@ from data_loader import fetch_data
 from features import prepare_volatility_dataset, build_sequences
 from train import train_model
 from backtest import compute_metrics
-from backtest_volatility import simulate_position_scaling, simulate_constant_exposure, evaluate_volatility_prediction_quality
+from backtest_volatility import simulate_position_scaling, simulate_position_scaling_graded, simulate_constant_exposure, evaluate_volatility_prediction_quality
 from walk_forward import generate_folds
 
 
-def run_volatility_walk_forward(ticker=None, horizon=None, lookback=None, n_folds=5, epochs=None, verbose_training=False):
+def run_volatility_walk_forward(ticker=None, horizon=None, lookback=None, n_folds=5, epochs=None,
+                                  verbose_training=False, scaling_fn=None):
     ticker = ticker or config.TICKER
     horizon = horizon or config.PREDICTION_HORIZON_DAYS
     lookback = lookback or config.VOLATILITY_LOOKBACK_DAYS
     epochs = epochs or config.EPOCHS
+    scaling_fn = scaling_fn or simulate_position_scaling
     window = config.LOOKBACK_WINDOW
 
     raw_df = fetch_data(ticker=ticker)
@@ -72,7 +74,7 @@ def run_volatility_walk_forward(ticker=None, horizon=None, lookback=None, n_fold
         fold_dates = dates[train_end:test_end]
         fold_prices = feat_df.loc[fold_dates, "Close"]
 
-        baseline_values, managed_values, position_sizes = simulate_position_scaling(fold_prices, test_preds)
+        baseline_values, managed_values, position_sizes = scaling_fn(fold_prices, test_preds)
         baseline_metrics = compute_metrics(baseline_values, f"Fold {fold_idx} baseline", quiet=True)
         managed_metrics = compute_metrics(managed_values, f"Fold {fold_idx} managed", quiet=True)
 
