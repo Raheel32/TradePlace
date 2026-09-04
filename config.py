@@ -44,6 +44,7 @@ VOLATILITY_LOOKBACK_DAYS = 10   # trailing window used as the "current volatilit
 VOL_MODEL_PATH = "models/lstm_model_vol.pt"
 VOL_SCALER_PATH = "models/scaler_vol.pkl"
 VOL_POSITION_SCALE_DOWN = 0.5   # position size multiplier on predicted high-volatility days (e.g. 0.5 = half size)
+VOL_GRADED_MAX_REDUCTION = 0.5  # graded variant: position = 1 - (this * predicted probability), scales continuously
 
 # --- Alpaca paper trading settings ---
 # NEVER hardcode real API keys here. Set these as environment variables instead:

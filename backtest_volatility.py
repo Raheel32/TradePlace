@@ -74,6 +74,40 @@ def simulate_position_scaling(prices: pd.Series, predicted_prob_expand: np.ndarr
     return baseline_values, managed_values, position_sizes
 
 
+def simulate_position_scaling_graded(prices: pd.Series, predicted_prob_expand: np.ndarray, max_reduction: float = None):
+    """
+    Alternative to the binary-threshold version above: instead of a single
+    0.5 cutoff and a fixed scale-down, position size scales CONTINUOUSLY with
+    the model's predicted probability -- position = 1 - (max_reduction * prob).
+    A prob of 0 keeps full position; a prob of 1 reduces to (1 - max_reduction).
+
+    This exists because the binary-threshold version discards exactly the
+    graded, ordinal information in the model's raw output -- and that's the
+    one piece of evidence (see evaluate_volatility_prediction_quality) that
+    held up consistently across every walk-forward fold, even when the
+    threshold-based binary decision didn't.
+    """
+    max_reduction = max_reduction if max_reduction is not None else config.VOL_GRADED_MAX_REDUCTION
+
+    daily_returns = prices.pct_change().dropna().values
+    n = min(len(daily_returns), len(predicted_prob_expand) - 1)
+    daily_returns = daily_returns[:n]
+    signals = predicted_prob_expand[:n]
+
+    position_sizes = 1 - max_reduction * signals
+
+    baseline_returns = daily_returns
+    managed_returns = daily_returns * position_sizes
+
+    baseline_values = config.INITIAL_CAPITAL * np.cumprod(1 + baseline_returns)
+    managed_values = config.INITIAL_CAPITAL * np.cumprod(1 + managed_returns)
+
+    baseline_values = np.concatenate([[config.INITIAL_CAPITAL], baseline_values])
+    managed_values = np.concatenate([[config.INITIAL_CAPITAL], managed_values])
+
+    return baseline_values, managed_values, position_sizes
+
+
 def evaluate_volatility_prediction_quality(prices: pd.Series, predicted_prob_expand: np.ndarray, horizon: int, lookback: int):
     """
     Checks the signal against the exact quantity the label is defined on:
@@ -114,14 +148,15 @@ def evaluate_volatility_prediction_quality(prices: pd.Series, predicted_prob_exp
             print("-> Predicted-EXPAND days did NOT show a bigger real increase. The signal isn't tracking real risk.")
 
 
-def run_volatility_backtest(ticker=None, horizon=None, lookback=None):
+def run_volatility_backtest(ticker=None, horizon=None, lookback=None, scaling_fn=None):
     horizon = horizon or config.PREDICTION_HORIZON_DAYS
     lookback = lookback or config.VOLATILITY_LOOKBACK_DAYS
+    scaling_fn = scaling_fn or simulate_position_scaling
     model, scaler, (X_test, y_test, test_preds, test_dates, test_prices) = run_volatility_training(
         ticker=ticker, horizon=horizon, lookback=lookback
     )
 
-    baseline_values, managed_values, position_sizes = simulate_position_scaling(test_prices, test_preds)
+    baseline_values, managed_values, position_sizes = scaling_fn(test_prices, test_preds)
 
     print(f"\n{'='*60}")
     baseline_metrics = compute_metrics(baseline_values, "Always Full Position (baseline)")
